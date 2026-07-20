@@ -292,7 +292,7 @@ $("saveBtn").onclick = async () => {
     $("amount").value = ""; $("desc").value = "";
     state.cat = null; renderChips();
     flash("Saved ✓");
-  } catch (e) { flash("Save failed — check connection"); }
+  } catch (e) { flash("Save failed: " + (e.code || e.message)); }
 };
 
 let toastTimer;
