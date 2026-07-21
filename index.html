@@ -118,7 +118,19 @@
   .tx .amt.in{color:var(--in)} .tx .amt.out{color:var(--out)}
   .biz-tag{font-size:10px;border:1px solid var(--line);border-radius:5px;padding:1px 5px;color:var(--muted);margin-left:6px;vertical-align:1px}
   .empty{color:var(--muted);text-align:center;padding:30px 0;font-size:14px}
-  .del{background:none;border:none;color:#555;font-size:16px;cursor:pointer;padding:4px}
+  .del{
+    background:var(--card-2);border:1px solid var(--line);color:#888;
+    width:38px;height:38px;border-radius:10px;font-size:16px;line-height:1;
+    cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center
+  }
+  .del:active{background:rgba(248,113,113,.15);border-color:var(--out);color:var(--out)}
+  .tx.voided{opacity:.45}
+  .tx.voided .amt,.tx.voided .cat{text-decoration:line-through}
+  .void-tag{font-size:10px;color:var(--out);border:1px solid var(--out);border-radius:5px;padding:1px 5px;margin-left:6px;vertical-align:1px}
+  #csvBtn{
+    padding:6px 12px;border-radius:999px;border:1px solid var(--brand);
+    background:transparent;color:var(--brand);font-size:12px;font-weight:600;cursor:pointer
+  }
   #loading{text-align:center;color:var(--muted);padding:60px 0}
   .hidden{display:none!important}
 </style>
@@ -173,6 +185,7 @@
       <button data-f="all" class="on">All</button>
       <button data-f="Excelean">Excelean</button>
       <button data-f="XCLN">XCLN</button>
+      <button id="csvBtn" title="Download CSV">CSV ⬇</button>
     </div>
   </div>
   <div id="txList"><div class="empty">No transactions yet. Record your first one above.</div></div>
@@ -185,7 +198,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, addDoc, deleteDoc, doc, query, where,
+import { getFirestore, collection, addDoc, updateDoc, doc, query, where,
   orderBy, onSnapshot, serverTimestamp, Timestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
@@ -201,8 +214,8 @@ const firebaseConfig = {
 
 /* ========= 2. Display names for each account ========= */
 const USER_NAMES = {
-  "your-uid-here": "Mazlee",
-  "zuraidah-uid-here": "Zuraidah"
+  "vVtKUlh8QAfOyjlDvlzsL47cbGp1": "Mazlee",
+  "fugsmBUlGAc9wnfJMFZcrmsJi2F3": "Zuraidah"
 };
 
 /* ========= Categories (edit freely) ========= */
@@ -335,7 +348,7 @@ function render(){
   const txs = state.filter === "all" ? state.txs : state.txs.filter(t => t.business === state.filter);
 
   let tin = 0, tout = 0;
-  txs.forEach(t => t.type === "in" ? tin += t.amount : tout += t.amount);
+  txs.forEach(t => { if (!t.voided) t.type === "in" ? tin += t.amount : tout += t.amount; });
   $("sumIn").textContent  = fmt(tin);
   $("sumOut").textContent = fmt(tout);
   $("sumNet").textContent = (tin - tout < 0 ? "−" : "") + fmt(Math.abs(tin - tout));
@@ -348,23 +361,68 @@ function render(){
   txs.forEach(t => {
     const d = t.createdAt?.toDate ? t.createdAt.toDate() : new Date();
     const row = document.createElement("div");
-    row.className = "tx";
+    row.className = "tx" + (t.voided ? " voided" : "");
+    const voidInfo = t.voided ? `<span class="void-tag">VOID</span>` : "";
     row.innerHTML = `
       <div class="dot ${t.type}"></div>
       <div class="mid">
-        <div class="cat">${esc(t.category)}<span class="biz-tag">${esc(t.business)}</span></div>
-        <div class="meta">${d.toLocaleDateString("en-GB",{day:"numeric",month:"short"})} · ${esc(t.recordedBy||"")}${t.description ? " · " + esc(t.description) : ""}</div>
+        <div class="cat">${esc(t.category)}<span class="biz-tag">${esc(t.business)}</span>${voidInfo}</div>
+        <div class="meta">${d.toLocaleDateString("en-GB",{day:"numeric",month:"short"})} · ${esc(t.recordedBy||"")}${t.description ? " · " + esc(t.description) : ""}${t.voided && t.voidedBy ? " · voided by " + esc(t.voidedBy) : ""}</div>
       </div>
       <div class="amt ${t.type}">${t.type==="in" ? "+" : "−"}${fmt(t.amount)}</div>
-      <button class="del" title="Delete">×</button>`;
-    row.querySelector(".del").onclick = async () => {
-      if (confirm("Delete this transaction?")) await deleteDoc(doc(db, "transactions", t.id));
+      ${t.voided ? "" : '<button class="del" title="Void entry">⊘</button>'}`;
+    const voidBtn = row.querySelector(".del");
+    if (voidBtn) voidBtn.onclick = async () => {
+      if (!confirm("Void this entry? It stays visible in the list but no longer counts in totals. This cannot be undone — if voided by mistake, re-enter the transaction.")) return;
+      try {
+        await updateDoc(doc(db, "transactions", t.id), {
+          voided: true,
+          voidedBy: USER_NAMES[auth.currentUser.uid] || auth.currentUser.email,
+          voidedAt: serverTimestamp()
+        });
+        flash("Entry voided");
+      } catch (e) { flash("Void failed: " + (e.code || e.message)); }
     };
     box.appendChild(row);
   });
 }
 
 function esc(s){ return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c])); }
+
+/* ---------- CSV export (current month, respects business filter) ---------- */
+$("csvBtn").onclick = () => {
+  const txs = state.filter === "all" ? state.txs : state.txs.filter(t => t.business === state.filter);
+  if (!txs.length) return flash("Nothing to export yet");
+
+  const header = ["Date","Type","Business","Category","Amount (BND)","Description","Recorded By","Status"];
+  const rows = txs.map(t => {
+    const d = t.createdAt?.toDate ? t.createdAt.toDate() : new Date();
+    return [
+      d.toLocaleDateString("en-GB"),               // dd/mm/yyyy
+      t.type === "in" ? "In" : "Out",
+      t.business, t.category,
+      t.amount.toFixed(2),
+      t.description || "",
+      t.recordedBy || "",
+      t.voided ? "VOIDED" + (t.voidedBy ? " by " + t.voidedBy : "") : "Active"
+    ];
+  });
+
+  const q = v => '"' + String(v).replace(/"/g, '""') + '"';
+  const csv = [header, ...rows].map(r => r.map(q).join(",")).join("\r\n");
+
+  const now = new Date();
+  const fname = `excelean-ledger-${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}` +
+                (state.filter !== "all" ? `-${state.filter}` : "") + ".csv";
+
+  const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = fname;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  flash("CSV downloaded");
+};
 </script>
 </body>
 </html>
