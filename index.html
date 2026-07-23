@@ -100,6 +100,26 @@
   .toast.show{opacity:1}
 
   /* ---------- List ---------- */
+  /* ---------- Report ---------- */
+  .report{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px;margin-bottom:20px}
+  .report-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+  .report-head h2{font-size:19px;text-transform:uppercase;font-weight:600}
+  #reportToggle{background:none;border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:5px 11px;font-size:12px;cursor:pointer}
+  .donut-row{display:flex;align-items:center;gap:18px;margin-bottom:18px}
+  .donut-legend{flex:1;font-size:13px}
+  .donut-legend div{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+  .swatch{width:11px;height:11px;border-radius:3px;flex-shrink:0}
+  .legend-amt{margin-left:auto;font-family:'Barlow Condensed';font-weight:700;font-size:17px}
+  .bar-group{margin-bottom:16px}
+  .bar-group .gtitle{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:9px}
+  .bar{margin-bottom:9px}
+  .bar .top{display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px}
+  .bar .top .amt{font-family:'Barlow Condensed';font-weight:700;font-size:15px}
+  .track{height:8px;background:var(--card-2);border-radius:99px;overflow:hidden}
+  .fill{height:100%;border-radius:99px;transition:width .4s ease}
+  .fill.in{background:var(--in)} .fill.out{background:var(--out)}
+  .report-empty{color:var(--muted);font-size:13px;text-align:center;padding:14px 0}
+
   .list-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
   .list-head h2{font-size:19px;text-transform:uppercase;font-weight:600}
   .filter{display:flex;gap:6px}
@@ -177,6 +197,14 @@
     </div>
     <input type="text" id="desc" placeholder="Note (optional)">
     <button class="btn btn-brand" id="saveBtn">Save transaction</button>
+  </div>
+
+  <div class="report" id="reportCard">
+    <div class="report-head">
+      <h2>This Month</h2>
+      <button id="reportToggle">Hide</button>
+    </div>
+    <div id="reportBody"></div>
   </div>
 
   <div class="list-head">
@@ -353,6 +381,8 @@ function render(){
   $("sumOut").textContent = fmt(tout);
   $("sumNet").textContent = (tin - tout < 0 ? "−" : "") + fmt(Math.abs(tin - tout));
 
+  renderReport(txs);
+
   const box = $("txList"); box.innerHTML = "";
   if (!txs.length) {
     box.innerHTML = '<div class="empty">No transactions yet this month. Record your first one above.</div>';
@@ -388,6 +418,76 @@ function render(){
 }
 
 function esc(s){ return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c])); }
+
+/* ---------- Report: donut (In vs Out) + category bars ---------- */
+$("reportToggle").onclick = () => {
+  const body = $("reportBody");
+  const hidden = body.classList.toggle("hidden");
+  $("reportToggle").textContent = hidden ? "Show" : "Hide";
+};
+
+function renderReport(txs){
+  const live = txs.filter(t => !t.voided);
+  const body = $("reportBody");
+
+  let tin = 0, tout = 0;
+  const catIn = {}, catOut = {};
+  live.forEach(t => {
+    if (t.type === "in") { tin += t.amount;  catIn[t.category]  = (catIn[t.category]  || 0) + t.amount; }
+    else                 { tout += t.amount; catOut[t.category] = (catOut[t.category] || 0) + t.amount; }
+  });
+
+  if (!live.length) {
+    body.innerHTML = '<div class="report-empty">No activity this month yet — the breakdown appears once you record transactions.</div>';
+    return;
+  }
+
+  /* Donut: In vs Out */
+  const total = tin + tout;
+  const R = 52, C = 2 * Math.PI * R;
+  const inLen = total ? (tin / total) * C : 0;
+  const donut = `
+    <svg viewBox="0 0 130 130" width="118" height="118" style="flex-shrink:0">
+      <circle cx="65" cy="65" r="${R}" fill="none" stroke="var(--card-2)" stroke-width="17"/>
+      <circle cx="65" cy="65" r="${R}" fill="none" stroke="var(--out)" stroke-width="17"
+              stroke-dasharray="${C}" stroke-dashoffset="0" transform="rotate(-90 65 65)"/>
+      <circle cx="65" cy="65" r="${R}" fill="none" stroke="var(--in)" stroke-width="17"
+              stroke-dasharray="${inLen} ${C}" stroke-dashoffset="0" transform="rotate(-90 65 65)"/>
+      <text x="65" y="61" text-anchor="middle" fill="var(--muted)"
+            font-family="Inter" font-size="9" letter-spacing="1">NET</text>
+      <text x="65" y="80" text-anchor="middle" fill="${tin - tout >= 0 ? 'var(--in)' : 'var(--out)'}"
+            font-family="Barlow Condensed" font-weight="700" font-size="21">${(tin-tout<0?"−":"")+fmt(Math.abs(tin-tout))}</text>
+    </svg>`;
+
+  const pct = v => total ? Math.round(v / total * 100) : 0;
+  const legend = `
+    <div class="donut-legend">
+      <div><span class="swatch" style="background:var(--in)"></span>Money In (${pct(tin)}%)<span class="legend-amt" style="color:var(--in)">${fmt(tin)}</span></div>
+      <div><span class="swatch" style="background:var(--out)"></span>Money Out (${pct(tout)}%)<span class="legend-amt" style="color:var(--out)">${fmt(tout)}</span></div>
+      <div style="border-top:1px solid var(--line);padding-top:7px;margin-top:2px">
+        <span style="color:var(--muted)">${live.length} entr${live.length===1?"y":"ies"}</span>
+        <span class="legend-amt" style="color:var(--brand)">${(tin-tout<0?"−":"")+fmt(Math.abs(tin-tout))}</span>
+      </div>
+    </div>`;
+
+  /* Category bars */
+  function barGroup(title, obj, cls){
+    const items = Object.entries(obj).sort((a,b) => b[1] - a[1]);
+    if (!items.length) return "";
+    const max = items[0][1];
+    const bars = items.map(([cat, amt]) => `
+      <div class="bar">
+        <div class="top"><span>${esc(cat)}</span><span class="amt" style="color:var(--${cls})">${fmt(amt)}</span></div>
+        <div class="track"><div class="fill ${cls}" style="width:${Math.max(3, amt/max*100)}%"></div></div>
+      </div>`).join("");
+    return `<div class="bar-group"><div class="gtitle">${title}</div>${bars}</div>`;
+  }
+
+  body.innerHTML =
+    `<div class="donut-row">${donut}${legend}</div>` +
+    barGroup("Where money came from", catIn, "in") +
+    barGroup("Where money went", catOut, "out");
+}
 
 /* ---------- CSV export (current month, respects business filter) ---------- */
 $("csvBtn").onclick = () => {
