@@ -65,6 +65,15 @@
   .summary .val{font-family:'Barlow Condensed';font-weight:700;font-size:28px;margin-top:2px}
   .val.in{color:var(--in)} .val.out{color:var(--out)} .val.net{color:var(--brand)}
   .month-label{font-size:12px;color:var(--muted);text-align:center;margin-bottom:8px;text-transform:uppercase;letter-spacing:.1em}
+  .month-nav{display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:8px}
+  .month-nav .month-label{margin-bottom:0;min-width:140px}
+  .month-nav button{
+    background:var(--card-2);border:1px solid var(--line);color:var(--text);
+    width:34px;height:34px;border-radius:9px;font-size:14px;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;flex-shrink:0
+  }
+  .month-nav button:active{border-color:var(--brand);color:var(--brand)}
+  .month-nav button:disabled{opacity:.3;cursor:default;border-color:var(--line);color:var(--muted)}
   .balance-strip{
     display:flex;align-items:center;justify-content:space-between;
     background:var(--card-2);border:1px solid var(--line);border-radius:12px;
@@ -186,7 +195,11 @@
     <span class="bl-label">Balance to date</span>
     <span class="bl-val num" id="runningBal">—</span>
   </div>
-  <div class="month-label" id="monthLabel"></div>
+  <div class="month-nav">
+    <button id="prevMonth" title="Previous month">◄</button>
+    <span class="month-label" id="monthLabel"></span>
+    <button id="nextMonth" title="Next month">►</button>
+  </div>
   <div class="summary">
     <div class="cell"><div class="lbl">In</div><div class="val in num" id="sumIn">0.00</div></div>
     <div class="cell"><div class="lbl">Out</div><div class="val out num" id="sumOut">0.00</div></div>
@@ -213,7 +226,7 @@
 
   <div class="report" id="reportCard">
     <div class="report-head">
-      <h2>This Month</h2>
+      <h2 id="reportTitle">This Month</h2>
       <button id="reportToggle">Hide</button>
     </div>
     <div id="reportBody"></div>
@@ -269,7 +282,7 @@ const auth = getAuth(app);
 const db   = getFirestore(app);
 
 const $ = id => document.getElementById(id);
-let state = { type:null, biz:"Excelean", cat:null, filter:"all", txs:[], allTxs:[], unsub:null, unsubAll:null };
+let state = { type:null, biz:"Excelean", cat:null, filter:"all", txs:[], allTxs:[], unsub:null, unsubAll:null, monthOffset:0 };
 
 /* ---------- Auth ---------- */
 onAuthStateChanged(auth, user => {
@@ -360,12 +373,16 @@ function flash(msg){
 function startListener(){
   if (state.unsub) state.unsub();
   const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  $("monthLabel").textContent = now.toLocaleDateString("en-GB", { month:"long", year:"numeric" });
+  const monthStart = new Date(now.getFullYear(), now.getMonth() + state.monthOffset, 1);
+  const monthEnd   = new Date(now.getFullYear(), now.getMonth() + state.monthOffset + 1, 1);
+  $("monthLabel").textContent = monthStart.toLocaleDateString("en-GB", { month:"long", year:"numeric" });
+  // Can't go past the current month
+  $("nextMonth").disabled = state.monthOffset >= 0;
 
   const q = query(
     collection(db, "transactions"),
     where("createdAt", ">=", Timestamp.fromDate(monthStart)),
+    where("createdAt", "<",  Timestamp.fromDate(monthEnd)),
     orderBy("createdAt", "desc")
   );
   state.unsub = onSnapshot(q, snap => {
@@ -373,13 +390,17 @@ function startListener(){
     render();
   }, err => console.error(err));
 
-  // All-time listener → running balance (survives the monthly reset)
+  // All-time listener → running balance (survives the monthly reset, independent of viewed month)
   if (state.unsubAll) state.unsubAll();
   state.unsubAll = onSnapshot(collection(db, "transactions"), snap => {
     state.allTxs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderBalance();
   }, err => console.error(err));
 }
+
+/* ---------- Month navigation ---------- */
+$("prevMonth").onclick = () => { state.monthOffset -= 1; startListener(); };
+$("nextMonth").onclick = () => { if (state.monthOffset < 0) { state.monthOffset += 1; startListener(); } };
 
 function renderBalance(){
   const txs = state.filter === "all" ? state.allTxs : state.allTxs.filter(t => t.business === state.filter);
@@ -412,6 +433,7 @@ function render(){
   $("sumNet").textContent = (tin - tout < 0 ? "−" : "") + fmt(Math.abs(tin - tout));
 
   renderReport(txs);
+  $("reportTitle").textContent = state.monthOffset === 0 ? "This Month" : $("monthLabel").textContent;
 
   const box = $("txList"); box.innerHTML = "";
   if (!txs.length) {
@@ -542,7 +564,8 @@ $("csvBtn").onclick = () => {
   const csv = [header, ...rows].map(r => r.map(q).join(",")).join("\r\n");
 
   const now = new Date();
-  const fname = `excelean-ledger-${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}` +
+  const vm = new Date(now.getFullYear(), now.getMonth() + state.monthOffset, 1);
+  const fname = `excelean-ledger-${vm.getFullYear()}-${String(vm.getMonth()+1).padStart(2,"0")}` +
                 (state.filter !== "all" ? `-${state.filter}` : "") + ".csv";
 
   const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
